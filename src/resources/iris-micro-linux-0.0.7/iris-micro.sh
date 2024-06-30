@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 if [ `getconf LONG_BIT` = "64" ]
 then
     echo "Starting 64-bit Iris micro"

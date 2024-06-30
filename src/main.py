@@ -138,6 +138,7 @@ if __name__ == "__main__":
         th = threading.Thread(target=key_obj.start_listener)
 
         th.daemon = True
+        # daemon threads exit when main thread exits
         th.start()
         app_root.mainloop()
         # pylint: disable=broad-exception-caught
