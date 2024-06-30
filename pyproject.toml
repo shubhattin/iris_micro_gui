@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "iris-micro-ui"
+version = "0.1.0"
+description = ""
+authors = ["Shubham Anand Gupta <81542648+shubhattin@users.noreply.github.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+keyboard = "^0.13.5"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+shubhlipi = "^0.0.0.181"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
