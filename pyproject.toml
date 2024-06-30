@@ -1,13 +1,15 @@
 [tool.poetry]
-name = "iris-micro-ui"
+name = "iris-micro-gui"
 version = "0.1.0"
-description = ""
+description = "A simple GUI base on iris_micro"
 authors = ["Shubham Anand Gupta <81542648+shubhattin@users.noreply.github.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
 keyboard = "^0.13.5"
 pynput = "^1.7.7"
+toml = "^0.10.2"
+pydantic = "^2.7.4"
 
 
 [tool.poetry.group.dev.dependencies]

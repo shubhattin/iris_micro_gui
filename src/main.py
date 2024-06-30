@@ -1,31 +1,73 @@
 import tkinter as tk
 from tkinter import ttk
 import threading
+import queue
+from pydantic import BaseModel, Field, ValidationError
+from copy import deepcopy
 
 from pynput import keyboard
 
-from iris_cli import iris_cli, DEFAULT_BRIGHT, DEFAULT_TEMP, reset_cli
+from iris_cli import (
+    iris_cli,
+    DEFAULT_BRIGHT,
+    DEFAULT_TEMP,
+    reset_cli,
+    BRIGHT_RANGE,
+    TEMP_RANGE,
+)
+
+
+class AppStateInfo(BaseModel):
+    """State info"""
+
+    temperature: int = Field(ge=TEMP_RANGE[0], le=TEMP_RANGE[1])
+    brightness: int = Field(ge=BRIGHT_RANGE[0], le=BRIGHT_RANGE[1])
 
 
 class SliderApp:
     """Class to create a temperature and brightness slider app"""
 
-    def __init__(self, root: tk.Tk):
+    def __init__(
+        self, root: tk.Tk, gui_q: queue.Queue, key_q: queue.Queue, state: AppStateInfo
+    ) -> None:
+        self.gui_queue: queue.Queue = gui_q
+        self.key_queue: queue.Queue = key_q
+
         self.root = root
         self.root.title("Temperature and Brightness Control")
 
         # Initialize StringVars for labels
         self.temperature_label_var = tk.StringVar(
-            value=f"Temperature: {DEFAULT_TEMP} K"
+            value=f"Temperature: {state.temperature} K"
         )
         self.brightness_label_var = tk.StringVar(
-            value=f"Brightness: {DEFAULT_BRIGHT} %"
+            value=f"Brightness: {state.brightness} %"
         )
 
         # Initialize IntVars for sliders
-        self.temperature_value = tk.IntVar(value=DEFAULT_TEMP)
-        self.brightness_value = tk.IntVar(value=DEFAULT_BRIGHT)
+        self.temperature_value = tk.IntVar(value=state.temperature)
+        self.brightness_value = tk.IntVar(value=state.brightness)
         self.make_sliders()
+        self.process_key_queue()
+
+    def process_key_queue(self):
+        """recieving messages from the keyboard queue"""
+
+        data: AppStateInfo = None
+        try:
+            while True:
+                # data that is passed to gui key
+                data = self.gui_queue.get_nowait()
+                # if data is fetched it should applied first and then proceed
+                self.on_brightness_change(val=data.brightness, update=False)
+                self.on_temperature_change(val=data.temperature, update=False)
+                self.update_iris()
+        except queue.Empty:
+            pass
+        except ValidationError:
+            pass
+
+        self.root.after(100, self.process_key_queue)
 
     def make_sliders(self):
         """Temperature and brightness sliders"""
@@ -42,8 +84,8 @@ class SliderApp:
         # Create and place the temperature slider
         temperature_slider = ttk.Scale(
             root,
-            from_=1000,
-            to=10000,
+            from_=TEMP_RANGE[0],
+            to=TEMP_RANGE[1],
             orient="horizontal",
             variable=self.temperature_value,
             command=self.on_temperature_change,
@@ -67,16 +109,25 @@ class SliderApp:
         )
         brightness_slider.pack(pady=10, padx=10)
 
-    def on_temperature_change(self, _=None):
+    def on_temperature_change(self, _=None, val: int | None = None, update=True):
         """Function to update the temperature label when the slider value changes"""
+        if val:
+            self.temperature_value.set(val)
         temperature_value = self.temperature_value.get()
         self.temperature_label_var.set(f"Temperature: {temperature_value} K")
-        iris_cli(self.temperature_value.get(), self.brightness_value.get())
+        if update:
+            self.update_iris()
 
-    def on_brightness_change(self, _=None):
+    def on_brightness_change(self, _=None, val: int | None = None, update=True):
         """Function to update the brightness label when the slider value changes"""
+        if val:
+            self.brightness_value.set(val)
         brightness_value = self.brightness_value.get()
         self.brightness_label_var.set(f"Brightness: {brightness_value} %")
+        if update:
+            self.update_iris()
+
+    def update_iris(self):
         iris_cli(self.temperature_value.get(), self.brightness_value.get())
 
     def reset(self):
@@ -91,24 +142,50 @@ class SliderApp:
 class KeboardShortcut:
     """Handling Keyboard Shortcuts and synchronizing with gui"""
 
-    def __init__(self) -> None:
-        self.ctrl_pressed = False
+    def __init__(self, key_q, gui_q, state: AppStateInfo) -> None:
+        self.key_queue: queue.Queue = key_q
+        self.gui_queue: queue.Queue = gui_q
+        self.state = state
 
+        self.ctrl_pressed = False
         self.brigh_step = 5
         self.temp_step = 100
+
+    def start_listener(self):
+        """start"""
+        with keyboard.Listener(
+            on_press=self.on_press, on_release=self.on_release
+        ) as listener:
+            listener.join()
 
     def on_press(self, key):
         """on press"""
 
         try:
+            key_comb_pressed = False
+            saved_state = deepcopy(self.state)
+
             if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
                 self.ctrl_pressed = True
-
-            if self.ctrl_pressed:
+            elif self.ctrl_pressed:
                 if key == keyboard.Key.f8:
-                    print("Decrease")
+                    self.state.brightness -= self.brigh_step
+                    key_comb_pressed = True
                 elif key == keyboard.Key.f9:
-                    print("Increase")
+                    self.state.brightness += self.brigh_step
+                    key_comb_pressed = True
+                elif key.char == "9":
+                    self.state.temperature += self.temp_step
+                    key_comb_pressed = True
+                elif key.char == "8":
+                    self.state.temperature -= self.temp_step
+                    key_comb_pressed = True
+                if key_comb_pressed:
+                    try:
+                        self.gui_queue.put(AppStateInfo(**self.state.model_dump()))
+                    except ValidationError:
+                        # restoring state
+                        self.state = saved_state
         except AttributeError:
             pass
 
@@ -120,26 +197,26 @@ class KeboardShortcut:
         except AttributeError:
             pass
 
-    def start_listener(self):
-        """start"""
-        with keyboard.Listener(
-            on_press=self.on_press, on_release=self.on_release
-        ) as listener:
-            listener.join()
-
 
 if __name__ == "__main__":
     try:
-        reset_cli()  # This might change in future if we want to tsave
+        # reset_cli()  # This might change in future if we want to tsave
+
+        INITIAL_STATE = AppStateInfo(
+            temperature=DEFAULT_TEMP, brightness=DEFAULT_BRIGHT
+        )
         app_root = tk.Tk()
-        app = SliderApp(app_root)
+        gui_queue = queue.Queue()
+        key_queue = queue.Queue()
 
-        key_obj = KeboardShortcut()
+        app = SliderApp(app_root, gui_q=gui_queue, key_q=key_queue, state=INITIAL_STATE)
+        key_obj = KeboardShortcut(gui_q=gui_queue, key_q=key_queue, state=INITIAL_STATE)
+
         th = threading.Thread(target=key_obj.start_listener)
-
         th.daemon = True
         # daemon threads exit when main thread exits
         th.start()
+
         app_root.mainloop()
         # pylint: disable=broad-exception-caught
     except Exception as e:

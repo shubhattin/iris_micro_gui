@@ -4,6 +4,8 @@ import subprocess as sub
 
 DEFAULT_TEMP = 6500
 DEFAULT_BRIGHT = 100
+TEMP_RANGE = [1000, 10000]
+BRIGHT_RANGE = [10, 100]
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOL_PATH = os.path.join(CURRENT_DIR, "resources/iris-micro-linux-0.0.7/iris-micro.sh")
