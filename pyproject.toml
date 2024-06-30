@@ -7,6 +7,7 @@ authors = ["Shubham Anand Gupta <81542648+shubhattin@users.noreply.github.com>"]
 [tool.poetry.dependencies]
 python = ">=3.10"
 keyboard = "^0.13.5"
+pynput = "^1.7.7"
 
 
 [tool.poetry.group.dev.dependencies]
