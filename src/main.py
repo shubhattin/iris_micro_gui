@@ -3,7 +3,7 @@ from tkinter import ttk
 import threading
 import queue
 from pydantic import BaseModel, Field, ValidationError
-from copy import deepcopy
+from typing import Callable
 
 from pynput import keyboard
 
@@ -15,6 +15,10 @@ from iris_cli import (
     BRIGHT_RANGE,
     TEMP_RANGE,
 )
+
+
+def get_type(value):
+    return str(type(value))[8:-2]
 
 
 class AppStateInfo(BaseModel):
@@ -157,62 +161,78 @@ class KeboardShortcut:
         self.gui_queue: queue.Queue = gui_q
         self.state = state
 
-        self.ctrl_pressed = False
-        self.alt_pressed = False
         self.brigh_step = 5
         self.temp_step = 100
+        self.hotkeys: dict[list[str], Callable] = {}
+        self.pressed_keys = []  # stack
+
+        self.register_control_hotkeys()
         self.process_key_queue()
 
+    def register_hotkey(self, hotkey_str: str, callback: Callable[[str], None]):
+        """Register a hotkey with a callback."""
+        keys = hotkey_str.split("+")
+        self.hotkeys[tuple(keys)] = callback
+
+    def register_control_hotkeys(self):
+        def update_state():
+            try:
+                self.gui_queue.put(AppStateInfo(**self.state.model_dump()))
+            except ValidationError:
+                pass
+
+        def bright_up(hotkey_name):
+            self.state.brightness += self.brigh_step
+            update_state()
+
+        def bright_down(hotkey_name):
+            self.state.brightness -= self.brigh_step
+            update_state()
+
+        def temp_up(hotkey_name):
+            self.state.temperature += self.temp_step
+            update_state()
+
+        def temp_down(hotkey_name):
+            self.state.temperature -= self.temp_step
+            update_state()
+
+        self.register_hotkey("alt+9", temp_up)
+        self.register_hotkey("alt+8", temp_down)
+        self.register_hotkey("alt+f9", bright_up)
+        self.register_hotkey("alt+f8", bright_down)
+
     def start_listener(self):
-        """start"""
+
         with keyboard.Listener(
             on_press=self.on_press, on_release=self.on_release
         ) as listener:
             listener.join()
 
-    def on_press(self, key):
+    def on_press(self, key: keyboard.KeyCode):
         """on press"""
-
+        key_name = ""
         try:
-            key_comb_pressed = False
-            saved_state = deepcopy(self.state)
-
-            if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-                self.ctrl_pressed = True
-            elif key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r):
-                self.alt_pressed = True
-            elif self.alt_pressed:
-                if key == keyboard.Key.f8:
-                    self.state.brightness -= self.brigh_step
-                    key_comb_pressed = True
-                elif key == keyboard.Key.f9:
-                    self.state.brightness += self.brigh_step
-                    key_comb_pressed = True
-                elif key.char == "9":
-                    self.state.temperature += self.temp_step
-                    key_comb_pressed = True
-                elif key.char == "8":
-                    self.state.temperature -= self.temp_step
-                    key_comb_pressed = True
-                if key_comb_pressed:
-                    try:
-                        self.gui_queue.put(AppStateInfo(**self.state.model_dump()))
-                    except ValidationError:
-                        # restoring state
-                        self.state = saved_state
+            key_name = key.char
         except AttributeError:
-            pass
+            key_name = key.name
+        self.pressed_keys.append(key_name)
+        for hotkey, callback in self.hotkeys.items():
+            if len(self.pressed_keys) != len(hotkey):
+                continue
+            hotkey_name = "+".join(hotkey)
+            for i, h_key in enumerate(hotkey):
+                p_key = self.pressed_keys[i]
+                if h_key != p_key:
+                    break
+            else:
+                # will run if no break
+                callback(hotkey_name)
 
     def on_release(self, key):
         """on release"""
-        try:
-            # if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-            if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-                self.ctrl_pressed = False
-            elif key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r):
-                self.alt_pressed = False
-        except AttributeError:
-            pass
+
+        self.pressed_keys.pop()
 
     def process_key_queue(self):
         """recieving messages from the keyboard queue made by the gui"""
