@@ -24,6 +24,9 @@ class AppStateInfo(BaseModel):
     brightness: int = Field(ge=BRIGHT_RANGE[0], le=BRIGHT_RANGE[1])
 
 
+APP_STALE_UPDATE_INTERVAL = 50  # ms
+
+
 class SliderApp:
     """Class to create a temperature and brightness slider app"""
 
@@ -48,16 +51,17 @@ class SliderApp:
         self.temperature_value = tk.IntVar(value=state.temperature)
         self.brightness_value = tk.IntVar(value=state.brightness)
         self.make_sliders()
-        self.process_key_queue()
+        self.process_gui_queue()
 
-    def process_key_queue(self):
-        """recieving messages from the keyboard queue"""
+    def process_gui_queue(self):
+        """recieving messages from the gui queue made by keyboard"""
 
         data: AppStateInfo = None
         try:
             while True:
                 # data that is passed to gui key
                 data = self.gui_queue.get_nowait()
+                self.state = data
                 # if data is fetched it should applied first and then proceed
                 self.on_brightness_change(val=data.brightness, update=False)
                 self.on_temperature_change(val=data.temperature, update=False)
@@ -67,7 +71,7 @@ class SliderApp:
         except ValidationError:
             pass
 
-        self.root.after(100, self.process_key_queue)
+        self.root.after(APP_STALE_UPDATE_INTERVAL, self.process_gui_queue)
 
     def make_sliders(self):
         """Temperature and brightness sliders"""
@@ -128,7 +132,13 @@ class SliderApp:
             self.update_iris()
 
     def update_iris(self):
-        iris_cli(self.temperature_value.get(), self.brightness_value.get())
+        temp = self.temperature_value.get()
+        bright = self.brightness_value.get()
+        iris_cli(temp, bright)
+        try:
+            self.key_queue.put(AppStateInfo(brightness=bright, temperature=temp))
+        except ValidationError:
+            pass
 
     def reset(self):
         """Reset with default temperature and brightness"""
@@ -148,8 +158,10 @@ class KeboardShortcut:
         self.state = state
 
         self.ctrl_pressed = False
+        self.alt_pressed = False
         self.brigh_step = 5
         self.temp_step = 100
+        self.process_key_queue()
 
     def start_listener(self):
         """start"""
@@ -165,9 +177,11 @@ class KeboardShortcut:
             key_comb_pressed = False
             saved_state = deepcopy(self.state)
 
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+            if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                 self.ctrl_pressed = True
-            elif self.ctrl_pressed:
+            elif key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r):
+                self.alt_pressed = True
+            elif self.alt_pressed:
                 if key == keyboard.Key.f8:
                     self.state.brightness -= self.brigh_step
                     key_comb_pressed = True
@@ -192,10 +206,34 @@ class KeboardShortcut:
     def on_release(self, key):
         """on release"""
         try:
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+            # if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+            if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                 self.ctrl_pressed = False
+            elif key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r):
+                self.alt_pressed = False
         except AttributeError:
             pass
+
+    def process_key_queue(self):
+        """recieving messages from the keyboard queue made by the gui"""
+
+        data: AppStateInfo = None
+        try:
+            while True:
+                # here we only nned to keep the state in sync
+                data = self.key_queue.get_nowait()
+                self.state = data
+        except queue.Empty:
+            pass
+        except ValidationError:
+            pass
+
+        # run this function every 100ms
+        timer = threading.Timer(
+            APP_STALE_UPDATE_INTERVAL / 1000, self.process_key_queue
+        )
+        timer.daemon = True
+        timer.start()
 
 
 if __name__ == "__main__":
