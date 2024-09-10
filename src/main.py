@@ -3,8 +3,9 @@ from tkinter import ttk
 import threading
 import queue
 from pydantic import BaseModel, Field, ValidationError
+from pydantic.dataclasses import dataclass
 from typing import Callable
-
+from rich import print
 from pynput import keyboard
 
 from iris_cli import (
@@ -54,10 +55,10 @@ class SliderApp:
         # Initialize IntVars for sliders
         self.temperature_value = tk.IntVar(value=state.temperature)
         self.brightness_value = tk.IntVar(value=state.brightness)
-        self.make_sliders()
-        self.process_gui_queue()
+        self.__make_sliders()
+        self.__process_gui_queue()
 
-    def process_gui_queue(self):
+    def __process_gui_queue(self):
         """recieving messages from the gui queue made by keyboard"""
 
         data: AppStateInfo = None
@@ -75,9 +76,9 @@ class SliderApp:
         except ValidationError:
             pass
 
-        self.root.after(APP_STALE_UPDATE_INTERVAL, self.process_gui_queue)
+        self.root.after(APP_STALE_UPDATE_INTERVAL, self.__process_gui_queue)
 
-    def make_sliders(self):
+    def __make_sliders(self):
         """Temperature and brightness sliders"""
         root = self.root
 
@@ -165,76 +166,78 @@ class KeboardShortcut:
         self.temp_step = 100
         self.hotkeys: dict[list[str], Callable] = {}
         self.pressed_keys = []  # stack
+        self.__register_control_hotkeys()
 
-        self.register_control_hotkeys()
-        self.process_key_queue()
-
-    def register_hotkey(self, hotkey_str: str, callback: Callable[[str], None]):
-        """Register a hotkey with a callback."""
-        keys = hotkey_str.split("+")
-        self.hotkeys[tuple(keys)] = callback
-
-    def register_control_hotkeys(self):
-        def update_state():
-            try:
-                self.gui_queue.put(AppStateInfo(**self.state.model_dump()))
-            except ValidationError:
-                pass
-
-        def bright_up(hotkey_name):
-            self.state.brightness += self.brigh_step
-            update_state()
-
-        def bright_down(hotkey_name):
-            self.state.brightness -= self.brigh_step
-            update_state()
-
-        def temp_up(hotkey_name):
-            self.state.temperature += self.temp_step
-            update_state()
-
-        def temp_down(hotkey_name):
-            self.state.temperature -= self.temp_step
-            update_state()
-
-        self.register_hotkey("alt+9", temp_up)
-        self.register_hotkey("alt+8", temp_down)
-        self.register_hotkey("alt+f9", bright_up)
-        self.register_hotkey("alt+f8", bright_down)
+        self.MODIFIER_KEYS = ["ctrl", "alt", "shift"]
+        self.__process_key_queue()
 
     def start_listener(self):
 
         with keyboard.Listener(
-            on_press=self.on_press, on_release=self.on_release
+            on_press=self.__on_press, on_release=self.__on_release
         ) as listener:
             listener.join()
 
-    def on_press(self, key: keyboard.KeyCode):
+    def __on_press(self, key: keyboard.KeyCode | keyboard.Key):
         """on press"""
+
+        """
+        To keep the logic of our app simple(fow now) we will have some restrictions
+        - Only support hotkeys of max length 3
+        - No consecutive multiple key press allowed
+        - We will only take ctrl, alt, shift as modifier keys, so that the keys after them can
+          pe parsed without order. Example: "ctrl+alt+9" and "alt+ctrl+9" will be same
+        - add a unsubscribe method to remove the listener
+        - the left and right variants of the modifier keys will be treated as same
+        """
+        key_name = ""
+        if isinstance(key, keyboard.KeyCode):
+            key_name = key.char
+            # if len(self.pressed_keys) != 0 and self.pressed_keys[-1] != key_name:
+            # self.pressed_keys.append(key_name)
+        elif isinstance(key, keyboard.Key):
+            key_name = key.name
+        to_append_key = True
+        if len(self.pressed_keys) > 0 and self.pressed_keys[-1] == key_name:
+            to_append_key = False
+        if to_append_key:
+            self.pressed_keys.append(key_name)
+
+        # print(f"[yellow]pressed[/], {key_name}, {self.pressed_keys}")
+        for hotkey, callback in self.hotkeys.items():
+            if len(hotkey) != len(self.pressed_keys):
+                continue
+            hotkey_name = "+".join(hotkey)
+            for i, h_key in enumerate(hotkey):
+                h_key_sep = self.seprate_key_types(h_key)
+                p_key_sep = self.seprate_key_types(self.pressed_keys[i])
+                if len(h_key_sep.modifiers_keys) != len(p_key_sep.modifiers_keys):
+                    break
+                elif (
+                    h_key_sep.modifiers_keys != p_key_sep.modifiers_keys
+                    or h_key_sep.other_keys != p_key_sep.other_keys
+                ):
+                    break
+            else:
+                # will run if no break
+                callback(hotkey_name)
+                pass
+
+    def __on_release(self, key):
+        """on release"""
+
         key_name = ""
         try:
             key_name = key.char
         except AttributeError:
             key_name = key.name
-        self.pressed_keys.append(key_name)
-        for hotkey, callback in self.hotkeys.items():
-            if len(self.pressed_keys) != len(hotkey):
-                continue
-            hotkey_name = "+".join(hotkey)
-            for i, h_key in enumerate(hotkey):
-                p_key = self.pressed_keys[i]
-                if h_key != p_key:
-                    break
-            else:
-                # will run if no break
-                callback(hotkey_name)
+        if len(self.pressed_keys) != 0:
+            self.pressed_keys.pop()
+        if len(self.pressed_keys) > 3:
+            self.pressed_keys.clear()
+        # print(f"[red]released[/], {key_name}, {self.pressed_keys}")
 
-    def on_release(self, key):
-        """on release"""
-
-        self.pressed_keys.pop()
-
-    def process_key_queue(self):
+    def __process_key_queue(self):
         """recieving messages from the keyboard queue made by the gui"""
 
         data: AppStateInfo = None
@@ -250,10 +253,73 @@ class KeboardShortcut:
 
         # run this function every 100ms
         timer = threading.Timer(
-            APP_STALE_UPDATE_INTERVAL / 1000, self.process_key_queue
+            APP_STALE_UPDATE_INTERVAL / 1000, self.__process_key_queue
         )
         timer.daemon = True
         timer.start()
+
+    def seprate_key_types(self, hotkey_str: str):
+        """Parses the key string and classifies them into modifier keys and other keys"""
+
+        @dataclass
+        class HotKey_Data:
+            modifiers_keys: list[str]
+            other_keys: list[str]
+
+        res = HotKey_Data([], [])
+
+        keys = hotkey_str.split("+")
+        for key in keys:
+            is_modifier = False
+            for mod_key in self.MODIFIER_KEYS:
+                if key.startswith(mod_key):
+                    main_key = key[: len(mod_key)]
+                    if len(key) != len(mod_key):
+                        other_half = key[len(mod_key) :]
+                        if other_half not in ("_r", "_l"):
+                            continue
+                    res.modifiers_keys.append(main_key)
+                    is_modifier = True
+            if not is_modifier:
+                res.other_keys.append(key)
+        return res
+
+    def register_hotkey(self, hotkey_str: str, callback: Callable[[str], None]):
+        """Register a hotkey with a callback."""
+        keys = hotkey_str.split("+")
+        self.hotkeys[tuple(keys)] = callback
+
+    def __register_control_hotkeys(self):
+        def update_state():
+            try:
+                self.gui_queue.put(AppStateInfo(**self.state.model_dump()))
+            except ValidationError as e:
+                pass
+
+        def bright_up(hotkey_name):
+            # print("bright up")
+            self.state.brightness += self.brigh_step
+            update_state()
+
+        def bright_down(hotkey_name):
+            # print("bright down")
+            self.state.brightness -= self.brigh_step
+            update_state()
+
+        def temp_up(hotkey_name):
+            # print("temp up")
+            self.state.temperature += self.temp_step
+            update_state()
+
+        def temp_down(hotkey_name):
+            # print("temp down")
+            self.state.temperature -= self.temp_step
+            update_state()
+
+        self.register_hotkey("alt+9", temp_up)
+        self.register_hotkey("alt+8", temp_down)
+        self.register_hotkey("alt+f9", bright_up)
+        self.register_hotkey("alt+f8", bright_down)
 
 
 if __name__ == "__main__":
@@ -278,6 +344,6 @@ if __name__ == "__main__":
         app_root.mainloop()
         # pylint: disable=broad-exception-caught
     except Exception as e:
-        pass
+        print(e)
     finally:
         reset_cli()
