@@ -1,11 +1,12 @@
 import tkinter as tk
+from typing import Callable
 from tkinter import ttk
 import threading
 import queue
 from pydantic import BaseModel, Field, ValidationError
 from pydantic.dataclasses import dataclass
-from typing import Callable
-from rich import print
+
+from rich.console import Console
 from pynput import keyboard
 
 from iris_cli import (
@@ -16,6 +17,8 @@ from iris_cli import (
     BRIGHT_RANGE,
     TEMP_RANGE,
 )
+
+console = Console()
 
 
 def get_type(value):
@@ -171,9 +174,9 @@ class KeboardShortcut:
 
         self.MODIFIER_KEYS = ["ctrl", "alt", "shift"]
         for key in ["ctrl", "alt", "shift"]:
-            self.MODIFIER_KEYS.append(f"{key}_l")
             self.MODIFIER_KEYS.append(f"{key}_r")
-            # ^ Adding the left and right variants of the modifier keys
+            # ^ Adding the right variant of the modifier keys
+            # there is not left variant of these keys, they are default ones
         self.__process_key_queue()
 
     def start_listener(self):
@@ -186,16 +189,15 @@ class KeboardShortcut:
     def __on_press(self, key: keyboard.KeyCode | keyboard.Key):
         """on press"""
 
-        """
-        To keep the logic of our app simple(fow now) we will have some restrictions
-        - Only support hotkeys of max length 3
-        - No consecutive multiple key press allowed
-        - We will only take ctrl, alt, shift as modifier keys, so that the keys after them can
-          pe parsed without order. Example: "ctrl+alt+9" and "alt+ctrl+9" will be same
-        - add a unsubscribe method to remove the listener
-        - the left and right variants of the modifier keys will be treated as same.
-          but if implicitly provided which variant is pressed, then it will be considered
-        """
+        # To keep the logic of our app simple(fow now) we will have some restrictions
+        # - Only support hotkeys of max length 3
+        # - No consecutive multiple key press allowed
+        # - We will only take ctrl, alt, shift as modifier keys, so that the keys after them can
+        #   pe parsed without order. Example: "ctrl+alt+9" and "alt+ctrl+9" will be same
+        # - add a unsubscribe method to remove the listener
+        # - the left and right variants of the modifier keys will be treated as same.
+        #   but if implicitly provided which variant is pressed, then it will be considered
+
         key_name = ""
         if isinstance(key, keyboard.KeyCode):
             key_name = key.char
@@ -206,42 +208,51 @@ class KeboardShortcut:
         to_append_key = True
         if len(self.pressed_keys) > 0 and self.pressed_keys[-1] == key_name:
             to_append_key = False
-        if to_append_key:
+        if to_append_key and key_name:
             self.pressed_keys.append(key_name)
 
         # print(f"[yellow]pressed[/], {key_name}, {self.pressed_keys}")
-        for items in self.hotkeys:
+        for i, items in enumerate(self.hotkeys):
             if not items:
                 continue
-            [hotkey, callback] = items
+            [hotkey, callback_func] = items
             if len(hotkey) != len(self.pressed_keys):
                 continue
             hotkey_name = "+".join(hotkey)
-            for i, h_key in enumerate(hotkey):
-                hotkey_key_sep = self.seprate_key_types(h_key)
-                if i == 3:
-                    print(hotkey_key_sep)
-                pressed_key_sep = self.seprate_key_types(
-                    self.pressed_keys[i]
-                )  # respect the left and right variants for custom user specified hotkeys
-                if len(hotkey_key_sep.modifiers_keys) != len(
-                    pressed_key_sep.modifiers_keys
-                ):
-                    break
-                elif (
-                    hotkey_key_sep.modifiers_keys != pressed_key_sep.modifiers_keys
-                    or hotkey_key_sep.other_keys != pressed_key_sep.other_keys
-                ):
-                    break
-            else:
-                # will run if no break
-                callback(hotkey_name)
-                pass
+            hotkey_key_sep = self.seprate_key_types(
+                hotkey_name, merge_left_right_variants_into_main=False
+            )
+            pressed_key_sep = self.seprate_key_types(
+                "+".join(self.pressed_keys),
+                merge_left_right_variants_into_main=not hotkey_key_sep.preserved_modifier_status,
+            )  # respect the left and right variants for custom user specified hotkeys
+
+            if len(hotkey_key_sep.modifiers_keys) != len(
+                pressed_key_sep.modifiers_keys
+            ):
+                continue
+            # we have to determine if all respective modifier keys are same but not in order
+            # and the other keys are also same
+            if not all(
+                [
+                    mod_key in pressed_key_sep.modifiers_keys
+                    for mod_key in hotkey_key_sep.modifiers_keys
+                ]
+            ) or not all(
+                [
+                    other_key in pressed_key_sep.other_keys
+                    for other_key in hotkey_key_sep.other_keys
+                ]
+            ):
+                continue
+            # console.log(f"[green]Matched[/], {hotkey_name}")
+            callback_func(hotkey_name)
+            break
 
     def __on_release(self, key):
         """on release"""
 
-        key_name = ""
+        key_name: str = ""
         try:
             key_name = key.char
         except AttributeError:
@@ -282,6 +293,7 @@ class KeboardShortcut:
         class HotKey_Data:
             modifiers_keys: list[str]
             other_keys: list[str]
+            preserved_modifier_status = False
 
         res = HotKey_Data([], [])
 
@@ -293,11 +305,13 @@ class KeboardShortcut:
                     main_key = key[: len(mod_key)]
                     if len(key) != len(mod_key):
                         other_half = key[len(mod_key) :]
-                        if not merge_left_right_variants_into_main:
-                            res.modifiers_keys.append(key)
-                            is_modifier = True
-                            break
-                        if other_half not in ("_r", "_l"):
+                        if other_half in ("_r",):
+                            if not merge_left_right_variants_into_main:
+                                res.modifiers_keys.append(key)
+                                res.preserved_modifier_status = True
+                                is_modifier = True
+                                break
+                        else:
                             continue
                     res.modifiers_keys.append(main_key)
                     is_modifier = True
@@ -352,10 +366,11 @@ class KeboardShortcut:
             self.state.temperature -= self.temp_step
             update_state()
 
-        self.register_hotkey("alt+9", temp_up)
-        self.register_hotkey("alt+8", temp_down)
-        self.register_hotkey("alt+f9", bright_up)
-        self.register_hotkey("alt+f8", bright_down)
+        # These options will not set by default before the merge the PR
+        self.register_hotkey("alt_r+0", temp_up)
+        self.register_hotkey("alt_r+9", temp_down)
+        self.register_hotkey("alt_r+f11", bright_up)
+        self.register_hotkey("alt_r+f10", bright_down)
 
 
 if __name__ == "__main__":
