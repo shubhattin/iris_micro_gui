@@ -170,6 +170,10 @@ class KeboardShortcut:
         self.__register_control_hotkeys()
 
         self.MODIFIER_KEYS = ["ctrl", "alt", "shift"]
+        for key in ["ctrl", "alt", "shift"]:
+            self.MODIFIER_KEYS.append(f"{key}_l")
+            self.MODIFIER_KEYS.append(f"{key}_r")
+            # ^ Adding the left and right variants of the modifier keys
         self.__process_key_queue()
 
     def start_listener(self):
@@ -214,13 +218,19 @@ class KeboardShortcut:
                 continue
             hotkey_name = "+".join(hotkey)
             for i, h_key in enumerate(hotkey):
-                h_key_sep = self.seprate_key_types(h_key)
-                p_key_sep = self.seprate_key_types(self.pressed_keys[i])
-                if len(h_key_sep.modifiers_keys) != len(p_key_sep.modifiers_keys):
+                hotkey_key_sep = self.seprate_key_types(h_key)
+                if i == 3:
+                    print(hotkey_key_sep)
+                pressed_key_sep = self.seprate_key_types(
+                    self.pressed_keys[i]
+                )  # respect the left and right variants for custom user specified hotkeys
+                if len(hotkey_key_sep.modifiers_keys) != len(
+                    pressed_key_sep.modifiers_keys
+                ):
                     break
                 elif (
-                    h_key_sep.modifiers_keys != p_key_sep.modifiers_keys
-                    or h_key_sep.other_keys != p_key_sep.other_keys
+                    hotkey_key_sep.modifiers_keys != pressed_key_sep.modifiers_keys
+                    or hotkey_key_sep.other_keys != pressed_key_sep.other_keys
                 ):
                     break
             else:
@@ -263,7 +273,9 @@ class KeboardShortcut:
         timer.daemon = True
         timer.start()
 
-    def seprate_key_types(self, hotkey_str: str):
+    def seprate_key_types(
+        self, hotkey_str: str, merge_left_right_variants_into_main=True
+    ):
         """Parses the key string and classifies them into modifier keys and other keys"""
 
         @dataclass
@@ -281,10 +293,15 @@ class KeboardShortcut:
                     main_key = key[: len(mod_key)]
                     if len(key) != len(mod_key):
                         other_half = key[len(mod_key) :]
+                        if not merge_left_right_variants_into_main:
+                            res.modifiers_keys.append(key)
+                            is_modifier = True
+                            break
                         if other_half not in ("_r", "_l"):
                             continue
                     res.modifiers_keys.append(main_key)
                     is_modifier = True
+                    break
             if not is_modifier:
                 res.other_keys.append(key)
         return res
