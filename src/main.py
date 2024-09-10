@@ -164,7 +164,8 @@ class KeboardShortcut:
 
         self.brigh_step = 5
         self.temp_step = 100
-        self.hotkeys: dict[list[str], Callable] = {}
+
+        self.hotkeys: list[tuple[tuple[str], Callable] | None] = []
         self.pressed_keys = []  # stack
         self.__register_control_hotkeys()
 
@@ -188,7 +189,8 @@ class KeboardShortcut:
         - We will only take ctrl, alt, shift as modifier keys, so that the keys after them can
           pe parsed without order. Example: "ctrl+alt+9" and "alt+ctrl+9" will be same
         - add a unsubscribe method to remove the listener
-        - the left and right variants of the modifier keys will be treated as same
+        - the left and right variants of the modifier keys will be treated as same.
+          but if implicitly provided which variant is pressed, then it will be considered
         """
         key_name = ""
         if isinstance(key, keyboard.KeyCode):
@@ -204,7 +206,10 @@ class KeboardShortcut:
             self.pressed_keys.append(key_name)
 
         # print(f"[yellow]pressed[/], {key_name}, {self.pressed_keys}")
-        for hotkey, callback in self.hotkeys.items():
+        for items in self.hotkeys:
+            if not items:
+                continue
+            [hotkey, callback] = items
             if len(hotkey) != len(self.pressed_keys):
                 continue
             hotkey_name = "+".join(hotkey)
@@ -286,8 +291,22 @@ class KeboardShortcut:
 
     def register_hotkey(self, hotkey_str: str, callback: Callable[[str], None]):
         """Register a hotkey with a callback."""
+
+        @dataclass
+        class EventInfo:
+            hotkey: str
+            event_id: int
+            unsubscribe: Callable[[], None]
+
         keys = hotkey_str.split("+")
-        self.hotkeys[tuple(keys)] = callback
+        self.hotkeys.append((tuple(keys), callback))
+
+        index = len(self.hotkeys) - 1
+
+        def unsub():
+            self.hotkeys[index] = None
+
+        return EventInfo(hotkey_str, index, unsub)
 
     def __register_control_hotkeys(self):
         def update_state():
