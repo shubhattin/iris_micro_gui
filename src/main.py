@@ -211,7 +211,7 @@ class KeboardShortcut:
         if to_append_key and key_name:
             self.pressed_keys.append(key_name)
 
-        # print(f"[yellow]pressed[/], {key_name}, {self.pressed_keys}")
+        # console.log(f"[yellow]pressed[/], {key_name}, {self.pressed_keys}")
         for i, items in enumerate(self.hotkeys):
             if not items:
                 continue
@@ -261,7 +261,7 @@ class KeboardShortcut:
             self.pressed_keys.pop()
         if len(self.pressed_keys) > 3:
             self.pressed_keys.clear()
-        # print(f"[red]released[/], {key_name}, {self.pressed_keys}")
+        # console.log(f"[red]released[/], {key_name}, {self.pressed_keys}")
 
     def __process_key_queue(self):
         """recieving messages from the keyboard queue made by the gui"""
@@ -347,30 +347,30 @@ class KeboardShortcut:
                 pass
 
         def bright_up(hotkey_name):
-            # print("bright up")
+            # console.log"bright up")
             self.state.brightness += self.brigh_step
             update_state()
 
         def bright_down(hotkey_name):
-            # print("bright down")
+            # console.log"bright down")
             self.state.brightness -= self.brigh_step
             update_state()
 
         def temp_up(hotkey_name):
-            # print("temp up")
+            # console.log"temp up")
             self.state.temperature += self.temp_step
             update_state()
 
         def temp_down(hotkey_name):
-            # print("temp down")
+            # console.log"temp down")
             self.state.temperature -= self.temp_step
             update_state()
 
         # These options will not set by default before the merge the PR
-        self.register_hotkey("alt_r+0", temp_up)
-        self.register_hotkey("alt_r+9", temp_down)
-        self.register_hotkey("alt_r+f11", bright_up)
-        self.register_hotkey("alt_r+f10", bright_down)
+        self.register_hotkey("alt+f9", bright_up)
+        self.register_hotkey("alt+f10", bright_down)
+        self.register_hotkey("alt+9", temp_up)
+        self.register_hotkey("alt+8", temp_down)
 
 
 if __name__ == "__main__":
@@ -395,6 +395,6 @@ if __name__ == "__main__":
         app_root.mainloop()
         # pylint: disable=broad-exception-caught
     except Exception as e:
-        print(e)
+        console.log(e)
     finally:
         reset_cli()
